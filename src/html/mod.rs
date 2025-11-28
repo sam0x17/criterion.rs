@@ -20,6 +20,21 @@ use tinytemplate::TinyTemplate;
 
 const THUMBNAIL_SIZE: Option<Size> = Some(Size(450, 300));
 
+fn ordinal(n: usize) -> String {
+    let rem100 = n % 100;
+    let suffix = if rem100 >= 11 && rem100 <= 13 {
+        "th"
+    } else {
+        match n % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        }
+    };
+    format!("{n}{suffix}")
+}
+
 fn debug_context<S: Serialize>(path: &Path, context: &S) {
     if crate::debug_enabled() {
         let mut context_path = PathBuf::from(path);
@@ -102,6 +117,8 @@ struct SummaryComparisonMetric {
 struct SummaryComparisonValue {
     name: String,
     rank: usize,
+    rank_ordinal: String,
+    rank_class: Option<String>,
     ratio: String,
     value: String,
     is_best: bool,
@@ -111,6 +128,7 @@ struct SummaryComparisonValue {
     rank_delta: Option<String>,
     score_delta: Option<String>,
     score_class: Option<String>,
+    next_rank_ordinal: Option<String>,
 }
 
 impl From<ComparisonRow> for SummaryComparisonMetric {
@@ -123,6 +141,8 @@ impl From<ComparisonRow> for SummaryComparisonMetric {
                 .map(|cell| SummaryComparisonValue {
                     name: cell.name,
                     rank: cell.rank,
+                    rank_ordinal: ordinal(cell.rank),
+                    rank_class: None,
                     ratio: format!("{:.3}", cell.ratio),
                     value: cell.formatted_value,
                     is_best: cell.is_best,
@@ -150,6 +170,7 @@ impl From<ComparisonRow> for SummaryComparisonMetric {
                             "regressed".to_owned()
                         }
                     }),
+                    next_rank_ordinal: cell.delta_to_next.map(|_| ordinal(cell.rank + 1)),
                 })
                 .collect(),
         }

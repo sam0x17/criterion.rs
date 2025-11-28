@@ -80,6 +80,21 @@ pub(crate) struct ComparisonRow {
 const COMPARISON_STATS: &[(Statistic, &'static str)] = &[(Statistic::Typical, "typical")];
 const SCORE_EPS: f64 = 0.0005;
 
+fn ordinal(n: usize) -> String {
+    let rem100 = n % 100;
+    let suffix = if rem100 >= 11 && rem100 <= 13 {
+        "th"
+    } else {
+        match n % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        }
+    };
+    format!("{n}{suffix}")
+}
+
 pub(crate) fn load_estimates_for_ids<'a>(
     output_directory: &Path,
     ids: &[&'a BenchmarkId],
@@ -1131,10 +1146,9 @@ impl Report for CliReport {
 
         self.text_overwrite();
         println!("Comparison for group '{}':", entries[0].0.group_id);
-        println!("  Higher is better; best performer in each metric is 1.00.");
+        println!("  Higher is better; best performer is 1.00 (typical).");
 
         for row in rows {
-            println!("  {}:", row.label);
             for cell in row.cells.iter() {
                 let ratio_str = format!("{:.3}", cell.ratio);
                 let ratio_str = if cell.is_best {
@@ -1150,6 +1164,18 @@ impl Report for CliReport {
                 } else {
                     self.red(&cell.formatted_value)
                 };
+
+                let value_with_delta = cell
+                    .delta_to_next
+                    .map(|d| {
+                        let delta_pct = self.green(&format!("{:.1}%", d));
+                        format!(
+                            "{value_str}, {delta} faster than {}",
+                            self.bold(ordinal(cell.rank + 1)),
+                            delta = delta_pct
+                        )
+                    })
+                    .unwrap_or_else(|| value_str.clone());
 
                 let change_str = cell
                     .change
@@ -1173,21 +1199,18 @@ impl Report for CliReport {
                         };
                         let score_segment = score_delta.unwrap_or_else(|| "0.000".to_owned());
 
-                        format!(" | change: [{}, {}]", score_segment, change_segment)
+                        format!(", change: [{}, {}]", score_segment, change_segment)
                     })
                     .unwrap_or_default();
-                let delta_str = cell
-                    .delta_to_next
-                    .map(|d| format!(" | {:.1}% faster than next", d))
-                    .unwrap_or_default();
+
+                let ord = self.bold(ordinal(cell.rank));
 
                 println!(
-                    "    ({rank}) {name}: {ratio} ({value}){delta}{change}",
-                    rank = cell.rank,
+                    "    {ord} {name}: {ratio} ({value}){change}",
+                    ord = ord,
                     name = cell.name,
                     ratio = ratio_str,
-                    value = value_str,
-                    delta = delta_str,
+                    value = value_with_delta,
                     change = change_str,
                 );
             }

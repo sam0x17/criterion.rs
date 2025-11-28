@@ -76,6 +76,15 @@
             color: #2d862d;
         }
 
+        .rank \{
+            font-weight: bold;
+        }
+
+        .delta-positive \{
+            color: #2d862d;
+            font-weight: bold;
+        }
+
         .change.improved \{
             color: #2d862d;
             font-weight: bold;
@@ -107,16 +116,14 @@
         {{- endif }}
         {{- if comparison }}
         <h3>Comparison</h3>
-        <p>Best performer per metric is normalized to 1.00; lower values indicate slower results relative to the fastest benchmark.</p>
+        <p>Best performer is normalized to 1.00 (typical); lower values indicate slower results relative to the fastest benchmark.</p>
         <table class="comparison">
             <thead>
                 <tr>
                     <th>Statistic</th>
-                    {{- if comparison }}
                     {{- for value in comparison.0.values }}
-                    <th>({value.rank}) {value.name}</th>
+                    <th><span class="rank">{value.rank_ordinal}</span> {value.name}</th>
                     {{- endfor }}
-                    {{- endif }}
                 </tr>
             </thead>
             <tbody>
@@ -126,10 +133,9 @@
                     {{- for value in row.values }}
                     <td class="{{ if value.is_best }}best{{ else }}worse{{ endif }}">
                         <div class="ratio">{value.ratio}</div>
-                        <div class="value">{value.value}</div>
-                        {{- if value.delta_to_next }}
-                        <div class="delta">{value.delta_to_next:.1}% faster than next</div>
-                        {{- endif }}
+                        <div class="value">
+                            {value.value}{{ if value.delta_to_next }}, <span class="delta-positive">{value.delta_to_next:.1}%</span> faster than {value.next_rank_ordinal | default(value="next")}{{ endif }}
+                        </div>
                         {{- if value.change }}
                         <div class="change{{ if value.change_class }} {value.change_class}{{ endif }}">
                             change: [{ if value.score_delta }<span class="{{ if value.score_class }}{value.score_class}{{ endif }}">{value.score_delta}</span>{ else }0.000{ endif }, {value.change}]
