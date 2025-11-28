@@ -220,7 +220,6 @@ pub enum BatchSize {
     /// will be larger than that of `NumBatches`. Most benchmarks should use `SmallInput` or
     /// `LargeInput` instead.
     NumIterations(u64),
-
 }
 impl BatchSize {
     /// Convert to a number of iterations per batch.
