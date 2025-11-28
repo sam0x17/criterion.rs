@@ -106,5 +106,3 @@ fn bench_fibs(c: &mut Criterion) {
     // add benchmarks as usual
 }
 ```
-
-    
