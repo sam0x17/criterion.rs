@@ -179,6 +179,7 @@ pub fn black_box<T>(dummy: T) -> T {
 /// it will be difficult to take accurate measurements. In this situation, the best option is to use
 /// [`Bencher::iter`] which has next-to-zero measurement overhead.
 #[derive(Debug, Eq, PartialEq, Copy, Hash, Clone)]
+#[non_exhaustive]
 pub enum BatchSize {
     /// `SmallInput` indicates that the input to the benchmark routine (the value returned from
     /// the setup routine) is small enough that millions of values can be safely held in memory.
@@ -220,8 +221,6 @@ pub enum BatchSize {
     /// `LargeInput` instead.
     NumIterations(u64),
 
-    #[doc(hidden)]
-    __NonExhaustive,
 }
 impl BatchSize {
     /// Convert to a number of iterations per batch.
@@ -237,7 +236,6 @@ impl BatchSize {
             BatchSize::PerIteration => 1,
             BatchSize::NumBatches(batches) => iters.div_ceil(batches),
             BatchSize::NumIterations(size) => size,
-            BatchSize::__NonExhaustive => panic!("__NonExhaustive is not a valid BatchSize."),
         }
     }
 }
