@@ -59,7 +59,9 @@
             text-align: center;
         }
 
-        table.comparison td .value \{
+        table.comparison td .value,
+        table.comparison td .delta,
+        table.comparison td .change \{
             display: block;
             font-size: 12px;
             opacity: 0.7;
@@ -70,6 +72,17 @@
         }
 
         table.comparison td.best \{
+            font-weight: bold;
+            color: #2d862d;
+        }
+
+        .change.improved \{
+            color: #2d862d;
+            font-weight: bold;
+        }
+
+        .change.regressed \{
+            color: #b22222;
             font-weight: bold;
         }
     </style>
@@ -114,6 +127,14 @@
                     <td class="{{ if value.is_best }}best{{ else }}worse{{ endif }}">
                         <div class="ratio">{value.ratio}</div>
                         <div class="value">{value.value}</div>
+                        {{- if value.delta_to_next }}
+                        <div class="delta">{value.delta_to_next:.1}% faster than next</div>
+                        {{- endif }}
+                        {{- if value.change }}
+                        <div class="change{{ if value.change_class }} {value.change_class}{{ endif }}">
+                            change: [{ if value.score_delta }<span class="{{ if value.score_class }}{value.score_class}{{ endif }}">{value.score_delta}</span>{ else }0.000{ endif }, {value.change}]
+                        </div>
+                        {{- endif }}
                     </td>
                     {{- endfor }}
                 </tr>

@@ -1,6 +1,6 @@
 use crate::report::{
-    build_comparison_rows, load_estimates_for_ids, make_filename_safe, BenchmarkId, ComparisonRow,
-    MeasurementData, Report, ReportContext,
+    build_comparison_rows, load_change_for_ids, load_estimates_for_ids, make_filename_safe,
+    BenchmarkId, ComparisonRow, MeasurementData, Report, ReportContext,
 };
 use crate::stats::bivariate::regression::Slope;
 
@@ -105,6 +105,12 @@ struct SummaryComparisonValue {
     ratio: String,
     value: String,
     is_best: bool,
+    delta_to_next: Option<String>,
+    change: Option<String>,
+    change_class: Option<String>,
+    rank_delta: Option<String>,
+    score_delta: Option<String>,
+    score_class: Option<String>,
 }
 
 impl From<ComparisonRow> for SummaryComparisonMetric {
@@ -114,15 +120,37 @@ impl From<ComparisonRow> for SummaryComparisonMetric {
             values: row
                 .cells
                 .into_iter()
-                .map(
-                    |cell| SummaryComparisonValue {
-                        name: cell.name,
-                        rank: cell.rank,
-                        ratio: format!("{:.3}", cell.ratio),
-                        value: cell.formatted_value,
-                        is_best: cell.is_best,
+                .map(|cell| SummaryComparisonValue {
+                    name: cell.name,
+                    rank: cell.rank,
+                    ratio: format!("{:.3}", cell.ratio),
+                    value: cell.formatted_value,
+                    is_best: cell.is_best,
+                    delta_to_next: cell.delta_to_next.map(|d| format!("{:.1}", d)),
+                    change: cell.change.map(|c| format::change(c, true)),
+                    change_class: match cell.change_positive {
+                        Some(true) => Some("regressed".to_owned()),
+                        Some(false) => Some("improved".to_owned()),
+                        None => None,
                     },
-                )
+                    rank_delta: None,
+                    score_delta: cell.score_delta.map(|d| {
+                        if d.abs() < 0.0005 {
+                            "0.000".to_owned()
+                        } else {
+                            format!("{:+.3}", d)
+                        }
+                    }),
+                    score_class: cell.score_delta.map(|d| {
+                        if d.abs() < 0.0005 {
+                            "".to_owned()
+                        } else if d > 0.0 {
+                            "improved".to_owned()
+                        } else {
+                            "regressed".to_owned()
+                        }
+                    }),
+                })
                 .collect(),
         }
     }
@@ -821,7 +849,8 @@ impl Html {
             let ids: Vec<_> = data.iter().map(|&&(id, _)| id).collect();
             let estimates = load_estimates_for_ids(&report_context.output_directory, &ids);
             if estimates.len() == ids.len() && estimates.len() > 1 {
-                let rows = build_comparison_rows(&estimates, formatter);
+                let change = load_change_for_ids(&report_context.output_directory, &ids);
+                let rows = build_comparison_rows(&estimates, formatter, Some(&change));
                 if rows.is_empty() {
                     None
                 } else {

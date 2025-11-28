@@ -15,8 +15,8 @@ use crate::stats::Distribution;
 use crate::{PlotConfiguration, Throughput};
 use anes::{Attribute, ClearLine, Color, ResetAttributes, SetAttribute, SetForegroundColor};
 use serde::{Deserialize, Serialize};
-use std::cmp;
-use std::collections::HashSet;
+use std::cmp::{self, Ordering};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::io::stderr;
 use std::io::Write;
@@ -65,6 +65,10 @@ pub(crate) struct ComparisonCell {
     pub ratio: f64,
     pub formatted_value: String,
     pub is_best: bool,
+    pub delta_to_next: Option<f64>,
+    pub change: Option<f64>,
+    pub change_positive: Option<bool>,
+    pub score_delta: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -74,6 +78,7 @@ pub(crate) struct ComparisonRow {
 }
 
 const COMPARISON_STATS: &[(Statistic, &'static str)] = &[(Statistic::Typical, "typical")];
+const SCORE_EPS: f64 = 0.0005;
 
 pub(crate) fn load_estimates_for_ids<'a>(
     output_directory: &Path,
@@ -86,6 +91,28 @@ pub(crate) fn load_estimates_for_ids<'a>(
                 .join("new")
                 .join("estimates.json");
             fs::load(&entry).ok().map(|estimates| (*id, estimates))
+        })
+        .collect()
+}
+
+pub(crate) fn load_change_for_ids(
+    output_directory: &Path,
+    ids: &[&BenchmarkId],
+) -> HashMap<String, f64> {
+    ids.iter()
+        .filter_map(|id| {
+            let entry = output_directory
+                .join(id.as_directory_name())
+                .join("change")
+                .join("estimates.json");
+            fs::load::<ChangeEstimates, _>(&entry)
+                .ok()
+                .map(|estimates| {
+                    (
+                        id.as_directory_name().to_owned(),
+                        estimates.mean.point_estimate,
+                    )
+                })
         })
         .collect()
 }
@@ -165,11 +192,13 @@ fn format_throughput_values(
 pub(crate) fn build_comparison_rows(
     entries: &[(&BenchmarkId, Estimates)],
     formatter: &dyn ValueFormatter,
+    change: Option<&HashMap<String, f64>>,
 ) -> Vec<ComparisonRow> {
     let mut rows = Vec::new();
 
     for (stat, label) in COMPARISON_STATS {
         let mut values = Vec::with_capacity(entries.len());
+        let mut base_values: Vec<(usize, f64)> = Vec::with_capacity(entries.len());
         for (_, est) in entries {
             if let Some(value) = est.get(*stat) {
                 values.push(value.point_estimate);
@@ -180,6 +209,49 @@ pub(crate) fn build_comparison_rows(
         }
         if values.is_empty() {
             continue;
+        }
+
+        for (idx, (id, _)) in entries.iter().enumerate() {
+            if let Some(change_ratio) = change
+                .and_then(|map: &HashMap<_, _>| map.get(id.as_directory_name()))
+                .copied()
+            {
+                let current = values[idx];
+                let base = current / (1.0 + change_ratio);
+                if base.is_finite() && base > 0.0 {
+                    base_values.push((idx, base));
+                }
+            }
+        }
+
+        let mut base_ranks: HashMap<usize, usize> = HashMap::new();
+        base_values.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(Ordering::Greater));
+        for (rank, (idx, _)) in base_values.into_iter().enumerate() {
+            base_ranks.insert(idx, rank + 1);
+        }
+        let mut base_ratio_map = HashMap::new();
+        if !base_ranks.is_empty() {
+            let mut base_values_only = Vec::new();
+            for (idx, _) in base_ranks.iter() {
+                if let Some(change_ratio) = change
+                    .and_then(|map: &HashMap<_, _>| map.get(entries[*idx].0.as_directory_name()))
+                {
+                    let current = values[*idx];
+                    let base_value = current / (1.0 + change_ratio);
+                    base_values_only.push((*idx, base_value));
+                }
+            }
+            if !base_values_only.is_empty() {
+                let base_best_val = base_values_only
+                    .iter()
+                    .map(|(_, v)| *v)
+                    .fold(f64::INFINITY, f64::min);
+                if base_best_val.is_finite() && base_best_val > 0.0 {
+                    for (idx, base_val) in base_values_only {
+                        base_ratio_map.insert(idx, base_best_val / base_val);
+                    }
+                }
+            }
         }
 
         let best = values.iter().copied().fold(f64::INFINITY, f64::min);
@@ -196,23 +268,46 @@ pub(crate) fn build_comparison_rows(
 
         let mut cells: Vec<_> = entries
             .iter()
+            .enumerate()
             .zip(ratios.iter())
             .zip(formatted_values.into_iter())
-            .map(|(((id, _), &ratio), formatted_value)| (id, ratio, formatted_value))
+            .map(|(((idx, (id, _)), &ratio), formatted_value)| (idx, id, ratio, formatted_value))
             .collect();
-        cells.sort_by(|(_, a, _), (_, b, _)| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        cells.sort_by(|(_, _, a, _), (_, _, b, _)| {
+            b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-        let cells = cells
+        let mut cells: Vec<ComparisonCell> = cells
             .into_iter()
             .enumerate()
-            .map(|(idx, (id, ratio, formatted_value))| ComparisonCell {
-                name: id.as_title().to_owned(),
-                rank: idx + 1,
-                ratio,
-                formatted_value,
-                is_best: (ratio - best_ratio).abs() < std::f64::EPSILON,
+            .map(|(idx, (original_idx, id, ratio, formatted_value))| {
+                let change_ratio = change
+                    .and_then(|map: &HashMap<_, _>| map.get(id.as_directory_name()))
+                    .copied();
+                let score_delta = base_ratio_map
+                    .get(&original_idx)
+                    .map(|base_ratio| ratio - base_ratio);
+                ComparisonCell {
+                    name: id.as_title().to_owned(),
+                    rank: idx + 1,
+                    ratio,
+                    formatted_value,
+                    is_best: (ratio - best_ratio).abs() < std::f64::EPSILON,
+                    delta_to_next: None,
+                    change: change_ratio,
+                    change_positive: change_ratio.map(|c| c > 0.0),
+                    score_delta,
+                }
             })
             .collect();
+
+        for idx in 0..cells.len().saturating_sub(1) {
+            let next_ratio = cells[idx + 1].ratio;
+            if next_ratio > 0.0 {
+                let percent = (cells[idx].ratio / next_ratio - 1.0) * 100.0;
+                cells[idx].delta_to_next = Some(percent);
+            }
+        }
 
         rows.push(ComparisonRow { label, cells });
     }
@@ -228,6 +323,39 @@ pub(crate) fn build_comparison_rows(
         }
 
         if !rates.is_empty() {
+            let mut base_rates = Vec::with_capacity(rates.len());
+            for (idx, (id, _)) in entries.iter().enumerate() {
+                if let (Some(change_ratio), Some(time)) = (
+                    change
+                        .and_then(|map: &HashMap<_, _>| map.get(id.as_directory_name()))
+                        .copied(),
+                    times.get(idx),
+                ) {
+                    let base_time = *time / (1.0 + change_ratio);
+                    if base_time.is_finite() && base_time > 0.0 {
+                        base_rates.push((idx, throughput_rate(&throughput, base_time)));
+                    }
+                }
+            }
+
+            let mut base_ranks: HashMap<usize, usize> = HashMap::new();
+            base_rates.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap_or(Ordering::Less));
+            for (rank, (idx, _)) in base_rates.iter().enumerate() {
+                base_ranks.insert(*idx, rank + 1);
+            }
+            let mut base_ratio_map = HashMap::new();
+            if !base_ranks.is_empty() {
+                let base_best_val = base_rates
+                    .iter()
+                    .map(|(_, v)| *v)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                if base_best_val.is_finite() && base_best_val > 0.0 {
+                    for (idx, base_val) in base_rates.iter() {
+                        base_ratio_map.insert(*idx, base_val / base_best_val);
+                    }
+                }
+            }
+
             let best = rates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             if best.is_finite() && best > 0.0 {
                 let ratios: Vec<f64> = rates.iter().map(|r| r / best).collect();
@@ -237,25 +365,49 @@ pub(crate) fn build_comparison_rows(
                 {
                     let mut cells: Vec<_> = entries
                         .iter()
+                        .enumerate()
                         .zip(ratios.iter())
                         .zip(formatted_values.into_iter())
-                        .map(|(((id, _), &ratio), formatted_value)| (id, ratio, formatted_value))
+                        .map(|(((idx, (id, _)), &ratio), formatted_value)| {
+                            (idx, id, ratio, formatted_value)
+                        })
                         .collect();
-                    cells.sort_by(|(_, a, _), (_, b, _)| {
+                    cells.sort_by(|(_, _, a, _), (_, _, b, _)| {
                         b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
                     });
 
-                    let cells = cells
+                    let mut cells: Vec<ComparisonCell> = cells
                         .into_iter()
                         .enumerate()
-                        .map(|(idx, (id, ratio, formatted_value))| ComparisonCell {
-                            name: id.as_title().to_owned(),
-                            rank: idx + 1,
-                            ratio,
-                            formatted_value,
-                            is_best: (ratio - best_ratio).abs() < std::f64::EPSILON,
+                        .map(|(idx, (original_idx, id, ratio, formatted_value))| {
+                            let change_ratio = change
+                                .and_then(|map: &HashMap<_, _>| map.get(id.as_directory_name()))
+                                .copied();
+                            let score_delta = base_ratio_map
+                                .get(&original_idx)
+                                .map(|base_ratio| ratio - base_ratio);
+                            ComparisonCell {
+                                name: id.as_title().to_owned(),
+                                rank: idx + 1,
+                                ratio,
+                                formatted_value,
+                                is_best: (ratio - best_ratio).abs() < std::f64::EPSILON,
+                                delta_to_next: None,
+                                change: change_ratio,
+                                change_positive: change_ratio.map(|c| c > 0.0),
+                                score_delta,
+                            }
                         })
                         .collect();
+
+                    for idx in 0..cells.len().saturating_sub(1) {
+                        let next_ratio = cells[idx + 1].ratio;
+                        if next_ratio > 0.0 {
+                            let percent = (cells[idx].ratio / next_ratio - 1.0) * 100.0;
+                            cells[idx].delta_to_next = Some(percent);
+                        }
+                    }
+
                     rows.push(ComparisonRow {
                         label: "throughput",
                         cells,
@@ -967,11 +1119,12 @@ impl Report for CliReport {
         }
 
         let entries = load_estimates_for_ids(&context.output_directory, &available_ids);
+        let change = load_change_for_ids(&context.output_directory, &available_ids);
         if entries.len() < 2 {
             return;
         }
 
-        let rows = build_comparison_rows(&entries, formatter);
+        let rows = build_comparison_rows(&entries, formatter, Some(&change));
         if rows.is_empty() {
             return;
         }
@@ -992,12 +1145,50 @@ impl Report for CliReport {
                     ratio_str
                 };
 
+                let value_str = if cell.is_best {
+                    self.green(&self.bold(cell.formatted_value.clone()))
+                } else {
+                    self.red(&cell.formatted_value)
+                };
+
+                let change_str = cell
+                    .change
+                    .map(|c| {
+                        let change_text = format::change(c, true);
+                        let score_delta = cell.score_delta.map(|d| {
+                            if d.abs() < SCORE_EPS {
+                                "0.000".to_owned()
+                            } else if d > 0.0 {
+                                self.green(&self.bold(format!("{:+.3}", d)))
+                            } else {
+                                self.red(&self.bold(format!("{:+.3}", d)))
+                            }
+                        });
+                        let change_segment = if c < 0.0 {
+                            self.green(&self.bold(change_text))
+                        } else if c > 0.0 {
+                            self.red(&self.bold(change_text))
+                        } else {
+                            change_text
+                        };
+                        let score_segment = score_delta.unwrap_or_else(|| "0.000".to_owned());
+
+                        format!(" | change: [{}, {}]", score_segment, change_segment)
+                    })
+                    .unwrap_or_default();
+                let delta_str = cell
+                    .delta_to_next
+                    .map(|d| format!(" | {:.1}% faster than next", d))
+                    .unwrap_or_default();
+
                 println!(
-                    "    ({rank}) {name}: {ratio} ({value})",
+                    "    ({rank}) {name}: {ratio} ({value}){delta}{change}",
                     rank = cell.rank,
                     name = cell.name,
                     ratio = ratio_str,
-                    value = cell.formatted_value,
+                    value = value_str,
+                    delta = delta_str,
+                    change = change_str,
                 );
             }
         }
@@ -1162,6 +1353,7 @@ mod test {
                 (&slow_id, estimates_for_point(20.0)),
             ],
             formatter,
+            None,
         );
 
         let typical = rows.iter().find(|r| r.label == "typical").unwrap();
@@ -1192,6 +1384,7 @@ mod test {
                 (&slow_id, estimates_for_point(20.0)),
             ],
             formatter,
+            None,
         );
 
         let throughput_row = rows

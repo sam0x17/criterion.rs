@@ -92,7 +92,8 @@ which can be generated with `Criterion::benchmark_group`.
 If you want Criterion.rs to emit a quick comparison of the implementations in a group, enable
 comparison mode on the group. The CLI and summary report normalize the *typical* statistic (the same
 primary number shown elsewhere in Criterion) so the fastest benchmark shows as `1.00` (ranked first)
-and slower ones are shown in red. At the moment only the typical statistic is shown in the
+and slower ones are shown in red. Each line also shows how much faster it is than the next entry
+and its change from the previous run if a baseline exists. At the moment only the typical statistic is shown in the
 comparison summary; other statistics are not included.
 
 ```rust
