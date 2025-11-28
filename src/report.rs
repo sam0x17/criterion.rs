@@ -4,8 +4,11 @@ use crate::stats::bivariate::regression::Slope;
 use crate::stats::univariate::outliers::tukey::LabeledSample;
 use crate::{html::Html, stats::bivariate::Data};
 
-use crate::estimate::{ChangeDistributions, ChangeEstimates, Distributions, Estimate, Estimates};
+use crate::estimate::{
+    ChangeDistributions, ChangeEstimates, Distributions, Estimate, Estimates, Statistic,
+};
 use crate::format;
+use crate::fs;
 use crate::measurement::ValueFormatter;
 use crate::stats::univariate::Sample;
 use crate::stats::Distribution;
@@ -53,6 +56,216 @@ impl<'a> MeasurementData<'a> {
     pub fn sample_times(&self) -> &Sample<f64> {
         self.data.y()
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct ComparisonCell {
+    pub name: String,
+    pub rank: usize,
+    pub ratio: f64,
+    pub formatted_value: String,
+    pub is_best: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct ComparisonRow {
+    pub label: &'static str,
+    pub cells: Vec<ComparisonCell>,
+}
+
+const COMPARISON_STATS: &[(Statistic, &'static str)] = &[(Statistic::Typical, "typical")];
+
+pub(crate) fn load_estimates_for_ids<'a>(
+    output_directory: &Path,
+    ids: &[&'a BenchmarkId],
+) -> Vec<(&'a BenchmarkId, Estimates)> {
+    ids.iter()
+        .filter_map(|id| {
+            let entry = output_directory
+                .join(id.as_directory_name())
+                .join("new")
+                .join("estimates.json");
+            fs::load(&entry).ok().map(|estimates| (*id, estimates))
+        })
+        .collect()
+}
+
+fn shared_throughput_and_times(
+    entries: &[(&BenchmarkId, Estimates)],
+) -> Option<(Throughput, Vec<f64>)> {
+    let mut iter = entries.iter();
+    let first = iter.next()?;
+    let throughput = first.0.throughput.clone()?;
+
+    if iter.all(|(id, _)| id.throughput.as_ref() == Some(&throughput)) {
+        let times = entries
+            .iter()
+            .map(|(_, est)| est.typical().point_estimate)
+            .collect();
+        Some((throughput, times))
+    } else {
+        None
+    }
+}
+
+fn throughput_rate(throughput: &Throughput, time_ns: f64) -> f64 {
+    let iters_per_second = 1e9 / time_ns;
+    match throughput {
+        Throughput::Bytes(b)
+        | Throughput::BytesDecimal(b)
+        | Throughput::Elements(b)
+        | Throughput::Bits(b) => *b as f64 * iters_per_second,
+    }
+}
+
+fn format_values_with_unit(values: &[f64], formatter: &dyn ValueFormatter) -> Option<Vec<String>> {
+    if values.is_empty() {
+        return None;
+    }
+    let typical = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if !typical.is_finite() {
+        return None;
+    }
+
+    let mut scaled = values.to_vec();
+    let unit = formatter.scale_values(typical, &mut scaled);
+
+    Some(
+        scaled
+            .into_iter()
+            .map(|v| format!("{:>6} {}", format::short(v), unit))
+            .collect(),
+    )
+}
+
+fn format_throughput_values(
+    throughput: &Throughput,
+    times: &[f64],
+    formatter: &dyn ValueFormatter,
+) -> Option<Vec<String>> {
+    if times.is_empty() {
+        return None;
+    }
+    let typical = times.iter().copied().fold(f64::INFINITY, f64::min);
+    if !typical.is_finite() || typical <= 0.0 {
+        return None;
+    }
+
+    let mut time_values = times.to_vec();
+    let unit = formatter.scale_throughputs(typical, throughput, &mut time_values);
+
+    Some(
+        time_values
+            .into_iter()
+            .map(|v| format!("{:>6} {}", format::short(v), unit))
+            .collect(),
+    )
+}
+
+pub(crate) fn build_comparison_rows(
+    entries: &[(&BenchmarkId, Estimates)],
+    formatter: &dyn ValueFormatter,
+) -> Vec<ComparisonRow> {
+    let mut rows = Vec::new();
+
+    for (stat, label) in COMPARISON_STATS {
+        let mut values = Vec::with_capacity(entries.len());
+        for (_, est) in entries {
+            if let Some(value) = est.get(*stat) {
+                values.push(value.point_estimate);
+            } else {
+                values.clear();
+                break;
+            }
+        }
+        if values.is_empty() {
+            continue;
+        }
+
+        let best = values.iter().copied().fold(f64::INFINITY, f64::min);
+        if !best.is_finite() || best <= 0.0 {
+            continue;
+        }
+
+        let ratios: Vec<f64> = values.iter().map(|v| best / *v).collect();
+        let best_ratio = ratios.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let formatted_values = match format_values_with_unit(&values, formatter) {
+            Some(values) => values,
+            None => continue,
+        };
+
+        let mut cells: Vec<_> = entries
+            .iter()
+            .zip(ratios.iter())
+            .zip(formatted_values.into_iter())
+            .map(|(((id, _), &ratio), formatted_value)| (id, ratio, formatted_value))
+            .collect();
+        cells.sort_by(|(_, a, _), (_, b, _)| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+        let cells = cells
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (id, ratio, formatted_value))| ComparisonCell {
+                name: id.as_title().to_owned(),
+                rank: idx + 1,
+                ratio,
+                formatted_value,
+                is_best: (ratio - best_ratio).abs() < std::f64::EPSILON,
+            })
+            .collect();
+
+        rows.push(ComparisonRow { label, cells });
+    }
+
+    if let Some((throughput, times)) = shared_throughput_and_times(entries) {
+        let mut rates = Vec::with_capacity(times.len());
+        for time in &times {
+            if *time <= 0.0 {
+                rates.clear();
+                break;
+            }
+            rates.push(throughput_rate(&throughput, *time));
+        }
+
+        if !rates.is_empty() {
+            let best = rates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            if best.is_finite() && best > 0.0 {
+                let ratios: Vec<f64> = rates.iter().map(|r| r / best).collect();
+                let best_ratio = ratios.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                if let Some(formatted_values) =
+                    format_throughput_values(&throughput, &times, formatter)
+                {
+                    let mut cells: Vec<_> = entries
+                        .iter()
+                        .zip(ratios.iter())
+                        .zip(formatted_values.into_iter())
+                        .map(|(((id, _), &ratio), formatted_value)| (id, ratio, formatted_value))
+                        .collect();
+                    cells.sort_by(|(_, a, _), (_, b, _)| {
+                        b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+
+                    let cells = cells
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, (id, ratio, formatted_value))| ComparisonCell {
+                            name: id.as_title().to_owned(),
+                            rank: idx + 1,
+                            ratio,
+                            formatted_value,
+                            is_best: (ratio - best_ratio).abs() < std::f64::EPSILON,
+                        })
+                        .collect();
+                    rows.push(ComparisonRow {
+                        label: "throughput",
+                        cells,
+                    });
+                }
+            }
+        }
+    }
+
+    rows
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -260,6 +473,7 @@ impl fmt::Debug for BenchmarkId {
 pub struct ReportContext {
     pub output_directory: PathBuf,
     pub plot_config: PlotConfiguration,
+    pub comparison: bool,
 }
 impl ReportContext {
     pub fn report_path<P: AsRef<Path> + ?Sized>(&self, id: &BenchmarkId, file_name: &P) -> PathBuf {
@@ -730,6 +944,65 @@ impl Report for CliReport {
         }
     }
 
+    fn summarize(
+        &self,
+        context: &ReportContext,
+        all_ids: &[BenchmarkId],
+        formatter: &dyn ValueFormatter,
+    ) {
+        if !context.comparison || all_ids.len() < 2 || matches!(self.verbosity, CliVerbosity::Quiet)
+        {
+            return;
+        }
+
+        let available_ids: Vec<_> = all_ids
+            .iter()
+            .filter(|id| {
+                let id_dir = context.output_directory.join(id.as_directory_name());
+                fs::is_dir(&id_dir)
+            })
+            .collect();
+        if available_ids.len() < 2 {
+            return;
+        }
+
+        let entries = load_estimates_for_ids(&context.output_directory, &available_ids);
+        if entries.len() < 2 {
+            return;
+        }
+
+        let rows = build_comparison_rows(&entries, formatter);
+        if rows.is_empty() {
+            return;
+        }
+
+        self.text_overwrite();
+        println!("Comparison for group '{}':", entries[0].0.group_id);
+        println!("  Higher is better; best performer in each metric is 1.00.");
+
+        for row in rows {
+            println!("  {}:", row.label);
+            for cell in row.cells.iter() {
+                let ratio_str = format!("{:.3}", cell.ratio);
+                let ratio_str = if cell.is_best {
+                    self.green(&self.bold(ratio_str))
+                } else if cell.ratio < 0.999 {
+                    self.red(&ratio_str)
+                } else {
+                    ratio_str
+                };
+
+                println!(
+                    "    ({rank}) {name}: {ratio} ({value})",
+                    rank = cell.rank,
+                    name = cell.name,
+                    ratio = ratio_str,
+                    value = cell.formatted_value,
+                );
+            }
+        }
+    }
+
     fn group_separator(&self) {
         println!();
     }
@@ -797,6 +1070,8 @@ fn compare_to_threshold(estimate: &Estimate, noise: f64) -> ComparisonResult {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::estimate::ConfidenceInterval;
+    use crate::measurement::{Measurement, WallTime};
 
     #[test]
     fn test_make_filename_safe_replaces_characters() {
@@ -851,5 +1126,80 @@ mod test {
         let mut new_id = existing_id.clone();
         new_id.ensure_directory_name_unique(&directories);
         assert_ne!(existing_id.as_directory_name(), new_id.as_directory_name());
+    }
+
+    fn estimate_with_value(value: f64) -> Estimate {
+        Estimate {
+            confidence_interval: ConfidenceInterval {
+                confidence_level: 0.95,
+                lower_bound: value,
+                upper_bound: value,
+            },
+            point_estimate: value,
+            standard_error: 0.0,
+        }
+    }
+
+    fn estimates_for_point(value: f64) -> Estimates {
+        Estimates {
+            mean: estimate_with_value(value),
+            median: estimate_with_value(value),
+            median_abs_dev: estimate_with_value(0.0),
+            slope: None,
+            std_dev: estimate_with_value(0.0),
+        }
+    }
+
+    #[test]
+    fn build_comparison_rows_prefers_lower_times() {
+        let formatter = WallTime.formatter();
+        let fast_id = BenchmarkId::new("group".to_owned(), Some("fast".to_owned()), None, None);
+        let slow_id = BenchmarkId::new("group".to_owned(), Some("slow".to_owned()), None, None);
+
+        let rows = build_comparison_rows(
+            &[
+                (&fast_id, estimates_for_point(10.0)),
+                (&slow_id, estimates_for_point(20.0)),
+            ],
+            formatter,
+        );
+
+        let typical = rows.iter().find(|r| r.label == "typical").unwrap();
+        assert_eq!(typical.cells.len(), 2);
+        assert!(typical.cells[0].is_best);
+        assert!(typical.cells[0].ratio > typical.cells[1].ratio);
+    }
+
+    #[test]
+    fn build_comparison_rows_include_throughput() {
+        let formatter = WallTime.formatter();
+        let fast_id = BenchmarkId::new(
+            "group".to_owned(),
+            Some("fast".to_owned()),
+            None,
+            Some(Throughput::Bytes(100)),
+        );
+        let slow_id = BenchmarkId::new(
+            "group".to_owned(),
+            Some("slow".to_owned()),
+            None,
+            Some(Throughput::Bytes(100)),
+        );
+
+        let rows = build_comparison_rows(
+            &[
+                (&fast_id, estimates_for_point(10.0)),
+                (&slow_id, estimates_for_point(20.0)),
+            ],
+            formatter,
+        );
+
+        let throughput_row = rows
+            .iter()
+            .find(|r| r.label == "throughput")
+            .expect("throughput row missing");
+        assert_eq!(throughput_row.cells.len(), 2);
+        assert!(throughput_row.cells[0].is_best);
+        assert!(throughput_row.cells[0].ratio > throughput_row.cells[1].ratio);
     }
 }

@@ -741,6 +741,7 @@ impl<M: Measurement> Criterion<M> {
         let report_context = ReportContext {
             output_directory: self.output_directory.clone(),
             plot_config: PlotConfiguration::default(),
+            comparison: false,
         };
 
         self.report.final_summary(&report_context);
@@ -1173,6 +1174,18 @@ https://bheisler.github.io/criterion.rs/book/faq.html
         }
 
         BenchmarkGroup::new(self, group_name)
+    }
+
+    /// Create a benchmark group that will automatically emit a comparison summary at the end of
+    /// the run. Use this to benchmark several implementations of the same operation and compare
+    /// them side-by-side.
+    pub fn comparison_benchmark_group<S: Into<String>>(
+        &mut self,
+        group_name: S,
+    ) -> BenchmarkGroup<'_, M> {
+        let mut group = self.benchmark_group(group_name);
+        group.comparison();
+        group
     }
 }
 impl<M> Criterion<M>

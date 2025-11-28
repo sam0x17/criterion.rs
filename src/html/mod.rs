@@ -1,4 +1,7 @@
-use crate::report::{make_filename_safe, BenchmarkId, MeasurementData, Report, ReportContext};
+use crate::report::{
+    build_comparison_rows, load_estimates_for_ids, make_filename_safe, BenchmarkId, ComparisonRow,
+    MeasurementData, Report, ReportContext,
+};
 use crate::stats::bivariate::regression::Slope;
 
 use crate::estimate::Estimate;
@@ -85,7 +88,44 @@ struct SummaryContext {
     violin_plot: Option<String>,
     line_chart: Option<String>,
 
+    comparison: Option<Vec<SummaryComparisonMetric>>,
     benchmarks: Vec<IndividualBenchmark>,
+}
+
+#[derive(Serialize)]
+struct SummaryComparisonMetric {
+    name: String,
+    values: Vec<SummaryComparisonValue>,
+}
+
+#[derive(Serialize)]
+struct SummaryComparisonValue {
+    name: String,
+    rank: usize,
+    ratio: String,
+    value: String,
+    is_best: bool,
+}
+
+impl From<ComparisonRow> for SummaryComparisonMetric {
+    fn from(row: ComparisonRow) -> Self {
+        SummaryComparisonMetric {
+            name: row.label.to_owned(),
+            values: row
+                .cells
+                .into_iter()
+                .map(
+                    |cell| SummaryComparisonValue {
+                        name: cell.name,
+                        rank: cell.rank,
+                        ratio: format!("{:.3}", cell.ratio),
+                        value: cell.formatted_value,
+                        is_best: cell.is_best,
+                    },
+                )
+                .collect(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -777,6 +817,27 @@ impl Html {
             })
             .collect();
 
+        let comparison = if full_summary && report_context.comparison {
+            let ids: Vec<_> = data.iter().map(|&&(id, _)| id).collect();
+            let estimates = load_estimates_for_ids(&report_context.output_directory, &ids);
+            if estimates.len() == ids.len() && estimates.len() > 1 {
+                let rows = build_comparison_rows(&estimates, formatter);
+                if rows.is_empty() {
+                    None
+                } else {
+                    Some(
+                        rows.into_iter()
+                            .map(SummaryComparisonMetric::from)
+                            .collect(),
+                    )
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let context = SummaryContext {
             group_id: id.as_title().to_owned(),
 
@@ -786,6 +847,7 @@ impl Html {
             violin_plot: Some(plot_ctx.violin_path().to_string_lossy().into_owned()),
             line_chart: line_path.map(|p| p.to_string_lossy().into_owned()),
 
+            comparison,
             benchmarks,
         };
 
