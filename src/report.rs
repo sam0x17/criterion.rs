@@ -77,12 +77,12 @@ pub(crate) struct ComparisonRow {
     pub cells: Vec<ComparisonCell>,
 }
 
-const COMPARISON_STATS: &[(Statistic, &'static str)] = &[(Statistic::Typical, "typical")];
+const COMPARISON_STATS: &[(Statistic, &str)] = &[(Statistic::Typical, "typical")];
 const SCORE_EPS: f64 = 0.0005;
 
 fn ordinal(n: usize) -> String {
     let rem100 = n % 100;
-    let suffix = if rem100 >= 11 && rem100 <= 13 {
+    let suffix = if (11..=13).contains(&rem100) {
         "th"
     } else {
         match n % 10 {
@@ -382,7 +382,7 @@ pub(crate) fn build_comparison_rows(
                         .iter()
                         .enumerate()
                         .zip(ratios.iter())
-                        .zip(formatted_values.into_iter())
+                        .zip(formatted_values)
                         .map(|(((idx, (id, _)), &ratio), formatted_value)| {
                             (idx, id, ratio, formatted_value)
                         })

@@ -22,7 +22,7 @@ const THUMBNAIL_SIZE: Option<Size> = Some(Size(450, 300));
 
 fn ordinal(n: usize) -> String {
     let rem100 = n % 100;
-    let suffix = if rem100 >= 11 && rem100 <= 13 {
+    let suffix = if (11..=13).contains(&rem100) {
         "th"
     } else {
         match n % 10 {
