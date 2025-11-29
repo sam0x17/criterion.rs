@@ -1148,7 +1148,12 @@ impl Report for CliReport {
         println!("Comparison for group '{}':", entries[0].0.group_id);
         println!("  Higher is better; best performer is 1.00 (typical).");
 
+        let show_labels = rows.len() > 1;
+
         for row in rows {
+            if show_labels {
+                println!("  {}:", row.label);
+            }
             for cell in row.cells.iter() {
                 let ratio_str = format!("{:.3}", cell.ratio);
                 let ratio_str = if cell.is_best {

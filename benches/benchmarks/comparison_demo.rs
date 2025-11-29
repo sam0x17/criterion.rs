@@ -1,6 +1,6 @@
 use std::hint::black_box;
 
-use criterion::{criterion_group, Criterion};
+use criterion::{criterion_group, Criterion, Throughput};
 
 fn fibonacci_slow(n: u64) -> u64 {
     match n {
@@ -57,6 +57,8 @@ fn fibonacci_memoized(n: u64, cache: &mut Vec<Option<u64>>) -> u64 {
 fn comparison_demo(c: &mut Criterion) {
     let mut group = c.comparison_benchmark_group("FibonacciComparison");
     let n = 20u64;
+
+    group.throughput(Throughput::Elements(1));
 
     group.bench_function("Recursive", |b| {
         b.iter(|| black_box(fibonacci_slow(black_box(n))))
