@@ -134,11 +134,11 @@
                     <td class="{{ if value.is_best }}best{{ else }}worse{{ endif }}">
                         <div class="ratio">{value.ratio}</div>
                         <div class="value">
-                            {value.value}{{ if value.delta_to_next }}, <span class="delta-positive">{value.delta_to_next:.1}%</span> faster than {value.next_rank_ordinal | default(value="next")}{{ endif }}
+                            {value.value}{{ if value.delta_to_next }}, <span class="delta-positive">{value.delta_to_next}%</span> faster than {{ if value.next_rank_ordinal }}{value.next_rank_ordinal}{{ else }}next{{ endif }}{{ endif }}
                         </div>
                         {{- if value.change }}
                         <div class="change{{ if value.change_class }} {value.change_class}{{ endif }}">
-                            change: [{ if value.score_delta }<span class="{{ if value.score_class }}{value.score_class}{{ endif }}">{value.score_delta}</span>{ else }0.000{ endif }, {value.change}]
+                            change: [{{ if value.score_delta }}<span class="{{ if value.score_class }}{value.score_class}{{ endif }}">{value.score_delta}</span>{{ else }}0.000{{ endif }}, {value.change}]
                         </div>
                         {{- endif }}
                     </td>
