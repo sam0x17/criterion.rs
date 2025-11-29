@@ -77,7 +77,7 @@ pub(crate) struct ComparisonRow {
     pub cells: Vec<ComparisonCell>,
 }
 
-const COMPARISON_STATS: &[(Statistic, &str)] = &[(Statistic::Typical, "typical")];
+const COMPARISON_STATS: &[(Statistic, &str)] = &[(Statistic::Typical, "time")];
 const SCORE_EPS: f64 = 0.0005;
 
 fn ordinal(n: usize) -> String {
@@ -1211,7 +1211,7 @@ impl Report for CliReport {
                 let ord = self.bold(ordinal(cell.rank));
 
                 println!(
-                    "    {ord} {name}: {ratio} ({value}){change}",
+                    "    {ord} {name}:\t{ratio} ({value}){change}",
                     ord = ord,
                     name = cell.name,
                     ratio = ratio_str,
