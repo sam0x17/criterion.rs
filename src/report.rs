@@ -64,6 +64,7 @@ pub(crate) struct ComparisonCell {
     pub rank: usize,
     pub ratio: f64,
     pub formatted_value: String,
+    pub throughput_value: Option<String>,
     pub is_best: bool,
     pub delta_to_next: Option<f64>,
     pub change: Option<f64>,
@@ -307,6 +308,7 @@ pub(crate) fn build_comparison_rows(
                     rank: idx + 1,
                     ratio,
                     formatted_value,
+                    throughput_value: None,
                     is_best: (ratio - best_ratio).abs() < f64::EPSILON,
                     delta_to_next: None,
                     change: change_ratio,
@@ -406,6 +408,7 @@ pub(crate) fn build_comparison_rows(
                                 rank: idx + 1,
                                 ratio,
                                 formatted_value,
+                                throughput_value: None,
                                 is_best: (ratio - best_ratio).abs() < f64::EPSILON,
                                 delta_to_next: None,
                                 change: change_ratio,
@@ -1176,7 +1179,7 @@ impl Report for CliReport {
                     self.red(&cell.formatted_value)
                 };
 
-                let value_with_delta = cell
+                let mut value_with_delta = cell
                     .delta_to_next
                     .map(|d| {
                         let delta_pct = self.green(&format!("{:.1}%", d));
@@ -1187,6 +1190,11 @@ impl Report for CliReport {
                         )
                     })
                     .unwrap_or_else(|| value_str.clone());
+                // Trim any leading space from throughput values to avoid "( 3.0 ...)" rendering.
+                if let Some(thr) = cell.throughput_value.as_ref() {
+                    let trimmed = thr.trim_start();
+                    value_with_delta.push_str(&format!(", {}", trimmed));
+                }
 
                 let label_plain_len = ordinal(cell.rank).len() + 1 + cell.name.len();
                 let padding = max_label_len.saturating_sub(label_plain_len);
