@@ -1149,6 +1149,12 @@ impl Report for CliReport {
         println!("  Higher is better; best performer is 1.00 (typical).");
 
         let show_labels = rows.len() > 1;
+        let max_label_len = rows
+            .iter()
+            .flat_map(|r| r.cells.iter())
+            .map(|c| ordinal(c.rank).len() + 1 + c.name.len())
+            .max()
+            .unwrap_or(0);
 
         for row in rows {
             if show_labels {
@@ -1182,6 +1188,10 @@ impl Report for CliReport {
                     })
                     .unwrap_or_else(|| value_str.clone());
 
+                let label_plain_len = ordinal(cell.rank).len() + 1 + cell.name.len();
+                let padding = max_label_len.saturating_sub(label_plain_len);
+                let label_colored = format!("{} {}", self.bold(ordinal(cell.rank)), cell.name);
+
                 let change_str = cell
                     .change
                     .map(|c| {
@@ -1208,12 +1218,10 @@ impl Report for CliReport {
                     })
                     .unwrap_or_default();
 
-                let ord = self.bold(ordinal(cell.rank));
-
                 println!(
-                    "    {ord} {name}:\t{ratio} ({value}){change}",
-                    ord = ord,
-                    name = cell.name,
+                    "    {}:{pad}{ratio} ({value}){change}",
+                    label_colored,
+                    pad = " ".repeat(padding + 1),
                     ratio = ratio_str,
                     value = value_with_delta,
                     change = change_str,
