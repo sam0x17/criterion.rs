@@ -133,6 +133,14 @@ struct SummaryComparisonValue {
 
 impl From<ComparisonRow> for SummaryComparisonMetric {
     fn from(row: ComparisonRow) -> Self {
+        fn format_rank_delta(value: f64) -> String {
+            if value > 200.0 {
+                format!("{:.2}x", 1.0 + value / 100.0)
+            } else {
+                format!("{:.1}%", value)
+            }
+        }
+
         SummaryComparisonMetric {
             name: row.label.to_owned(),
             values: row
@@ -146,7 +154,7 @@ impl From<ComparisonRow> for SummaryComparisonMetric {
                     ratio: format!("{:.3}", cell.ratio),
                     value: cell.formatted_value,
                     is_best: cell.is_best,
-                    delta_to_next: cell.delta_to_next.map(|d| format!("{:.1}", d)),
+                    delta_to_next: cell.delta_to_next.map(format_rank_delta),
                     change: cell.change.map(|c| format::change(c, true)),
                     change_class: match cell.change_positive {
                         Some(true) => Some("regressed".to_owned()),

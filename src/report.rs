@@ -1221,7 +1221,12 @@ impl Report for CliReport {
                     if cell.ratio > 0.0 && prev_ratio.is_finite() {
                         let slower_pct = (prev_ratio / cell.ratio - 1.0) * 100.0;
                         if slower_pct.is_finite() {
-                            let slower_str = self.red(&format!("{:.1}%", slower_pct));
+                            let slower_text = if slower_pct > 200.0 {
+                                format!("{:.2}x", 1.0 + slower_pct / 100.0)
+                            } else {
+                                format!("{:.1}%", slower_pct)
+                            };
+                            let slower_str = self.red(&slower_text);
                             rank_parts.push(format!(
                                 "{} slower than {}",
                                 slower_str,
@@ -1231,7 +1236,12 @@ impl Report for CliReport {
                     }
                 }
                 if let Some(delta) = cell.delta_to_next {
-                    let delta_pct = self.green(&format!("{:.1}%", delta));
+                    let delta_text = if delta > 200.0 {
+                        format!("{:.2}x", 1.0 + delta / 100.0)
+                    } else {
+                        format!("{:.1}%", delta)
+                    };
+                    let delta_pct = self.green(&delta_text);
                     rank_parts.push(format!(
                         "{} faster than {}",
                         delta_pct,
