@@ -321,8 +321,8 @@ pub(crate) fn build_comparison_rows(
         for idx in 0..cells.len().saturating_sub(1) {
             let next_ratio = cells[idx + 1].ratio;
             if next_ratio > 0.0 {
-                let percent = (cells[idx].ratio / next_ratio - 1.0) * 100.0;
-                cells[idx].delta_to_next = Some(percent);
+                let savings = (cells[idx].ratio / next_ratio - 1.0) * 100.0;
+                cells[idx].delta_to_next = Some(savings);
             }
         }
 
@@ -420,9 +420,9 @@ pub(crate) fn build_comparison_rows(
 
                     for idx in 0..cells.len().saturating_sub(1) {
                         let next_ratio = cells[idx + 1].ratio;
-                        if next_ratio > 0.0 {
-                            let percent = (cells[idx].ratio / next_ratio - 1.0) * 100.0;
-                            cells[idx].delta_to_next = Some(percent);
+                        if next_ratio > 0.0 && cells[idx].ratio > 0.0 {
+                            let savings = (cells[idx].ratio / next_ratio - 1.0) * 100.0;
+                            cells[idx].delta_to_next = Some(savings);
                         }
                     }
 
