@@ -1163,7 +1163,7 @@ impl Report for CliReport {
             if show_labels {
                 println!("  {}:", row.label);
             }
-            for cell in row.cells.iter() {
+            for (idx, cell) in row.cells.iter().enumerate() {
                 let ratio_str = format!("{:.3}", cell.ratio);
                 let ratio_str = if cell.is_best {
                     self.green(&self.bold(ratio_str))
@@ -1179,18 +1179,7 @@ impl Report for CliReport {
                     self.red(&cell.formatted_value)
                 };
 
-                let mut value_with_delta = cell
-                    .delta_to_next
-                    .map(|d| {
-                        let delta_pct = self.green(&format!("{:.1}%", d));
-                        format!(
-                            "{value_str}, {delta} faster than {}",
-                            self.bold(ordinal(cell.rank + 1)),
-                            delta = delta_pct
-                        )
-                    })
-                    .unwrap_or_else(|| value_str.clone());
-                // Trim any leading space from throughput values to avoid "( 3.0 ...)" rendering.
+                let mut value_with_delta = value_str.clone();
                 if let Some(thr) = cell.throughput_value.as_ref() {
                     let trimmed = thr.trim_start();
                     value_with_delta.push_str(&format!(", {}", trimmed));
@@ -1226,13 +1215,43 @@ impl Report for CliReport {
                     })
                     .unwrap_or_default();
 
+                let mut rank_parts = Vec::new();
+                if idx > 0 {
+                    let prev_ratio = row.cells[idx - 1].ratio;
+                    if cell.ratio > 0.0 && prev_ratio.is_finite() {
+                        let slower_pct = (prev_ratio / cell.ratio - 1.0) * 100.0;
+                        if slower_pct.is_finite() {
+                            let slower_str = self.red(&format!("{:.1}%", slower_pct));
+                            rank_parts.push(format!(
+                                "{} slower than {}",
+                                slower_str,
+                                self.bold(ordinal(cell.rank - 1))
+                            ));
+                        }
+                    }
+                }
+                if let Some(delta) = cell.delta_to_next {
+                    let delta_pct = self.green(&format!("{:.1}%", delta));
+                    rank_parts.push(format!(
+                        "{} faster than {}",
+                        delta_pct,
+                        self.bold(ordinal(cell.rank + 1))
+                    ));
+                }
+                let rank_str = if rank_parts.is_empty() {
+                    String::new()
+                } else {
+                    format!(", rank: [{}]", rank_parts.join(", "))
+                };
+
                 println!(
-                    "    {}:{pad}{ratio} ({value}){change}",
+                    "    {}:{pad}{ratio} ({value}){change}{rank}",
                     label_colored,
                     pad = " ".repeat(padding + 1),
                     ratio = ratio_str,
                     value = value_with_delta,
                     change = change_str,
+                    rank = rank_str,
                 );
             }
         }
